@@ -1,0 +1,42 @@
+name: live-backup
+
+# 맥이 꺼져 있을 때 실시간 착순(live.json)을 대신 갱신한다. 금·토·일 09:30~21:00(KST)에 5분마다.
+# 맥(tools/publish_live.py)이 최근 10분 안에 갱신했으면 아무것도 하지 않는다.
+on:
+  schedule:
+    - cron: "*/5 0-12 * * 5,6,0"   # UTC 00:00~12:55 = KST 09:00~21:55 (스크립트가 09:30~21:00만 처리)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-backup
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests==2.32.3
+      - name: 착순 갱신
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+        run: python .github/scripts/live_backup.py
+      - name: 바뀌었으면 올리기
+        run: |
+          if git diff --quiet -- live.json; then echo "변경 없음"; exit 0; fi
+          git config user.name "kra-report"
+          git config user.email "kra-report@users.noreply.github.com"
+          git add live.json
+          git commit -m "실시간 착순(백업) $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M')"
+          for i in 1 2 3; do
+            git pull --rebase -X ours origin main && git push && exit 0  # 겹치면 원격(맥) 쪽 유지
+            sleep 5
+          done
+          exit 1
